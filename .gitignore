@@ -20,3 +20,5 @@ pipeline/*.txt
 
 pipeline/*.csv
 pipeline/*.txt
+
+.env 
