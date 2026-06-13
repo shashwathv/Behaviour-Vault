@@ -15,3 +15,8 @@ reports/*.txt
 scored_sessions.csv
 
 # NOTE: The models/ folder is NOT ignored so the React Native app can pull the .tflite file.
+pipeline/*.csv
+pipeline/*.txt
+
+pipeline/*.csv
+pipeline/*.txt
