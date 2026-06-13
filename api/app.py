@@ -65,14 +65,15 @@ MEAN = [604.4399, 0.5071, 451.8634, 179.5553, 0.0493]
 STD  = [191.6922, 0.0997, 144.1839,  78.1840, 0.0192]
 
 # ── Config ─────────────────────────────────────────────────────────────────
-EWMA_ALPHA          = 0.15
-WARMUP_SESSIONS     = 3
-ANOMALY_THRESHOLD   = 0.8
-ELEVATED_THRESHOLD  = 0.5
-GLOBAL_WEIGHT       = 0.6
-BASELINE_WEIGHT     = 0.4
-BASELINE_NORMALIZER = 3.0
-SUMMARY_EVERY       = 25     # print summary every N /predict calls
+EWMA_ALPHA              = 0.15
+WARMUP_SESSIONS         = 3
+ANOMALY_THRESHOLD       = 0.8     # is_anomaly returned to client at >this
+SEVERE_ANOMALY_THRESHOLD = 0.95   # baseline is FROZEN only at >this
+ELEVATED_THRESHOLD      = 0.5
+GLOBAL_WEIGHT           = 0.6
+BASELINE_WEIGHT         = 0.4
+BASELINE_NORMALIZER     = 3.0
+SUMMARY_EVERY           = 25
 
 BASELINE_DIR = os.path.join(BASE_DIR, "baselines")
 os.makedirs(BASELINE_DIR, exist_ok=True)
@@ -351,7 +352,14 @@ def predict():
 
     is_anomaly = combined_score > ANOMALY_THRESHOLD
 
-    if not is_anomaly:
+    # Update baseline unless the score is *extreme*, not just over the
+    # anomaly threshold. This prevents the lockout pattern where one
+    # borderline anomaly freezes the baseline forever — legitimate users
+    # whose behavior naturally varies would otherwise be locked out.
+    # An attacker producing >0.95 scores still cannot pollute the baseline.
+    freeze_baseline = combined_score > SEVERE_ANOMALY_THRESHOLD
+
+    if not freeze_baseline:
         updated = update_ewma_baseline(user_id, raw, baseline)
         session_count = updated['session_count']
     else:
@@ -376,7 +384,7 @@ def predict():
         'session_count':    session_count,
         'is_anomaly':       is_anomaly,
         'level':            level,
-        'baseline_updated': not is_anomaly,
+        'baseline_updated': not freeze_baseline,
     }
 
     # ── Update stats + log ────────────────────────────────────────────────
