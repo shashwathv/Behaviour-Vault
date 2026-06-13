@@ -1,3 +1,28 @@
+"""
+BehaviorVault 2.0 — Inference API (v3 with live terminal dashboard)
+====================================================================
+
+PATHS:
+  Reads:        models/behavior_model.tflite
+  Reads/writes: baselines/<user_id>.json
+
+WHAT'S NEW IN v3:
+  • Rich-formatted terminal dashboard for every /predict request
+  • Startup banner showing config
+  • Auto-printed summary every 25 requests, on /stats endpoint
+  • Compact log lines for /baseline GET/DELETE
+  • /health stays silent (uptime monitors hit it frequently)
+  • Tracks client IP (Cloudflare-aware), unique users, p50/p95 latency
+
+VIEW IT:
+  docker logs -f behaviour-vault20         ← live tail
+  docker logs --tail 200 behaviour-vault20
+
+REQUIREMENTS:
+  Add to requirements.txt:
+    rich>=13.0
+"""
+
 # Suppress TensorFlow's startup noise so the dashboard reads cleanly.
 import os
 os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '3')
@@ -17,7 +42,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich import box
 
-# Console 
+# ── Console ────────────────────────────────────────────────────────────────
 # force_terminal=True keeps ANSI colors flowing through docker logs/journald.
 console = Console(
     force_terminal=True,
@@ -28,14 +53,14 @@ console = Console(
 app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Model 
+# ── Model ──────────────────────────────────────────────────────────────────
 MODEL_PATH = os.path.join(BASE_DIR, "models", "behavior_model.tflite")
 interpreter = tf.lite.Interpreter(model_path=MODEL_PATH)
 interpreter.allocate_tensors()
 INPUT_DETAILS  = interpreter.get_input_details()
 OUTPUT_DETAILS = interpreter.get_output_details()
 
-# ── Scaler values
+# ── Scaler values (from get_scalar_value.py output) ────────────────────────
 MEAN = [604.4399, 0.5071, 451.8634, 179.5553, 0.0493]
 STD  = [191.6922, 0.0997, 144.1839,  78.1840, 0.0192]
 
@@ -66,7 +91,7 @@ LEVEL_STYLE = {
     "ANOMALY":  ("red",    "✗"),
 }
 
-# Live stats 
+# ── Live stats ─────────────────────────────────────────────────────────────
 STATS_LOCK = threading.Lock()
 STATS = {
     'started_at':  time.time(),
@@ -81,7 +106,10 @@ STATS = {
 }
 RECENT = deque(maxlen=50)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  BASELINE PERSISTENCE
+# ─────────────────────────────────────────────────────────────────────────────
 _USER_ID_RE = re.compile(r'[^A-Za-z0-9_\-]')
 
 def safe_user_id(user_id: str) -> str:
@@ -126,7 +154,9 @@ def score_against_baseline(raw, baseline_values):
     return float(np.mean(deviations))
 
 
+# ─────────────────────────────────────────────────────────────────────────────
 #  MODEL INFERENCE
+# ─────────────────────────────────────────────────────────────────────────────
 def run_tflite(raw):
     normalized = [(raw[i] - MEAN[i]) / STD[i] for i in range(5)]
     input_data = np.array([normalized], dtype=np.float32)
@@ -140,7 +170,9 @@ def classify_level(score):
     return 'NORMAL'
 
 
+# ─────────────────────────────────────────────────────────────────────────────
 #  DASHBOARD LOGGING
+# ─────────────────────────────────────────────────────────────────────────────
 def get_client_ip():
     """Real client IP, accounting for Cloudflare tunnel headers."""
     return (request.headers.get('CF-Connecting-IP')
@@ -185,6 +217,7 @@ def print_request_panel(req_id, ip, user_id, raw, result, latency_ms):
     body.add_row("", "")
 
     body.add_row("[bold cyan]OUTPUT[/]", "")
+    body.add_row("  confidence_pct", f"[bold]{result['confidence_pct']}%[/]")
     body.add_row("  global_score",   f"{result['global_score']:.4f}")
     bs = (f"{result['baseline_score']:.4f}"
           if result['baseline_score'] is not None else "[dim]—[/]")
@@ -248,9 +281,12 @@ def print_error(ip, status, msg):
     )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
 #  ROUTES
+# ─────────────────────────────────────────────────────────────────────────────
 @app.route('/health', methods=['GET'])
 def health():
+    # Silent — uptime monitors hit this often.
     return jsonify({
         'status':          'ok',
         'model_loaded':    True,
@@ -293,8 +329,10 @@ def predict():
         print_error(ip, 400, f"user={user_id}  non-numeric feature")
         return jsonify({'error': 'All features must be numeric'}), 400
 
+    # ── Global model ──────────────────────────────────────────────────────
     global_score = run_tflite(raw)
 
+    # ── Personal baseline ─────────────────────────────────────────────────
     baseline = load_baseline(user_id)
     prior_session_count = baseline['session_count'] if baseline else 0
     baseline_score = (
@@ -322,11 +360,17 @@ def predict():
     level = classify_level(combined_score)
     latency_ms = int((time.perf_counter() - start) * 1000)
 
+    # confidence_pct = how confident we are this IS the real user (0..100).
+    # Pre-computed so clients don't have to do (1 - score) * 100 themselves,
+    # which is bug-prone if they accidentally read baseline_score (unbounded).
+    confidence_pct = int(round((1.0 - combined_score) * 100))
+
     result = {
         'user_id':          user_id,
-        'score':            round(combined_score, 4),
-        'global_score':     round(global_score, 4),
-        'baseline_score':   round(baseline_score, 4) if baseline_score is not None else None,
+        'confidence_pct':   confidence_pct,   # 0..100 — safe to display directly
+        'score':            round(combined_score, 4),    # 0..1 — anomaly score
+        'global_score':     round(global_score, 4),      # 0..1 — model only
+        'baseline_score':   round(baseline_score, 4) if baseline_score is not None else None,  # UNBOUNDED z-score; do not display raw
         'using_baseline':   using_baseline,
         'warmup_remaining': max(0, WARMUP_SESSIONS - session_count),
         'session_count':    session_count,
@@ -335,6 +379,7 @@ def predict():
         'baseline_updated': not is_anomaly,
     }
 
+    # ── Update stats + log ────────────────────────────────────────────────
     with STATS_LOCK:
         STATS['total'] += 1
         STATS[level] += 1
@@ -406,6 +451,8 @@ def get_stats():
             'recent_requests': list(RECENT),
         })
 
+
+# ── Startup banner — prints once on module load (works under gunicorn) ─────
 print_banner()
 
 if __name__ == '__main__':
