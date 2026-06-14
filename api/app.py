@@ -86,8 +86,8 @@ WARMUP_SESSIONS          = 3
 ANOMALY_THRESHOLD        = 0.8    # is_anomaly returned to client
 SEVERE_ANOMALY_THRESHOLD = 0.95   # baseline frozen only above this
 ELEVATED_THRESHOLD       = 0.5
-GLOBAL_WEIGHT            = 0.6
-BASELINE_WEIGHT          = 0.4
+GLOBAL_WEIGHT            = 0.3    # was 0.6 — global model is for cold-start
+BASELINE_WEIGHT          = 0.7    # was 0.4 — personal baseline knows the user
 BASELINE_NORMALIZER      = 3.0
 SUMMARY_EVERY            = 25
 
@@ -208,6 +208,20 @@ def score_against_baseline(raw, baseline_values):
 # ─────────────────────────────────────────────────────────────────────────────
 #  MODEL INFERENCE
 # ─────────────────────────────────────────────────────────────────────────────
+# Zero values mean "no activity for this gesture this session" — not anomalous,
+# just absent. Training data never contained zeros (swipes clipped to 150+, etc),
+# so raw 0 saturates the model. Replacing 0s with training means before global
+# inference makes missing features contribute z=0 (neutral signal). The personal
+# baseline still tracks raw values so user-specific patterns learn correctly.
+def impute_for_global_model(raw):
+    imputed_features = []
+    new_raw = list(raw)
+    for i, v in enumerate(raw):
+        if v == 0:
+            new_raw[i] = MEAN[i]
+            imputed_features.append(FEATURE_KEYS[i])
+    return new_raw, imputed_features
+
 def run_tflite(raw):
     normalized = [(raw[i] - MEAN[i]) / STD[i] for i in range(5)]
     input_data = np.array([normalized], dtype=np.float32)
@@ -284,6 +298,10 @@ def print_request_panel(req_id, ip, user_id, raw, result, latency_ms):
         body.add_row("  warmup_remaining",
                      f"[yellow]{result['warmup_remaining']} session(s)[/]")
     body.add_row("  using_baseline", "yes" if result['using_baseline'] else "no")
+    if result.get('imputed_features'):
+        imp = ", ".join(f.replace('_avg', '').replace('_ms', '').replace('_per_sec', '')
+                        for f in result['imputed_features'])
+        body.add_row("  imputed (missing)", f"[yellow]{imp}[/]")
     body.add_row("  decision",       f"[{color} bold]{icon} {result['level']}[/]")
 
     title = (f"[bold]#{req_id}[/]  ·  [dim]{ts()}[/]  ·  "
@@ -431,8 +449,9 @@ def predict(payload: PredictInput, request: Request):
     user_id = payload.user()
     raw = payload.features()
 
-    # ── Global model ──────────────────────────────────────────────────────
-    global_score = run_tflite(raw)
+    # ── Global model (with zero-imputation) ───────────────────────────────
+    raw_for_model, imputed_features = impute_for_global_model(raw)
+    global_score = run_tflite(raw_for_model)
 
     # ── Personal baseline ─────────────────────────────────────────────────
     baseline = load_baseline(user_id)
@@ -465,17 +484,18 @@ def predict(payload: PredictInput, request: Request):
     confidence_pct = int(round((1.0 - combined_score) * 100))
 
     result = {
-        'user_id':          user_id,
-        'confidence_pct':   confidence_pct,
-        'score':            round(combined_score, 4),
-        'global_score':     round(global_score, 4),
-        'baseline_score':   round(baseline_score, 4) if baseline_score is not None else None,
-        'using_baseline':   using_baseline,
-        'warmup_remaining': max(0, WARMUP_SESSIONS - session_count),
-        'session_count':    session_count,
-        'is_anomaly':       is_anomaly,
-        'level':            level,
-        'baseline_updated': not freeze_baseline,
+        'user_id':           user_id,
+        'confidence_pct':    confidence_pct,
+        'score':             round(combined_score, 4),
+        'global_score':      round(global_score, 4),
+        'baseline_score':    round(baseline_score, 4) if baseline_score is not None else None,
+        'using_baseline':    using_baseline,
+        'warmup_remaining':  max(0, WARMUP_SESSIONS - session_count),
+        'session_count':     session_count,
+        'is_anomaly':        is_anomaly,
+        'level':             level,
+        'baseline_updated':  not freeze_baseline,
+        'imputed_features':  imputed_features,    # features that were 0 (missing)
     }
 
     with STATS_LOCK:
