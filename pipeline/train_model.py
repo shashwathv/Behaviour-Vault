@@ -1,22 +1,3 @@
-"""
-SCRIPT 2 — Train Isolation Forest + Save Model
-===============================================
-BehaviorVault 2.0 | SuRaksha Cyber Hackathon 2.0
-
-PATHS:
-  Reads:  data/behavioral_data.csv
-  Writes: models/isolation_forest.pkl
-          models/scaler.pkl
-          data/scored_sessions.csv
-          reports/evaluation_report.txt
-
-The Isolation Forest is UNSUPERVISED — it trains only on label=0 rows.
-Labels are only used for the post-hoc evaluation in Step 4.
-
-HOW TO RUN:
-  python pipeline/train_model.py
-"""
-
 import os
 import numpy as np
 import pandas as pd
@@ -26,7 +7,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (classification_report, confusion_matrix,
                              roc_auc_score)
 
-# ── Paths ───────────────────────────────────────────────────────────────────
+
 SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 DATA_DIR     = os.path.join(PROJECT_ROOT, "data")
@@ -49,7 +30,7 @@ FEATURES = [
     "accel_variance",
 ]
 
-# ── Step 1 — Load data ──────────────────────────────────────────────────────
+
 print("=" * 55)
 print("STEP 1 — Loading data")
 print("=" * 55)
@@ -69,7 +50,7 @@ y        = df["label"].values
 X_normal = df[df["label"] == 0][FEATURES].values
 print(f"  Training set (normal-only): {len(X_normal)} rows")
 
-# ── Step 2 — Scale features ─────────────────────────────────────────────────
+
 print("\n" + "=" * 55)
 print("STEP 2 — Scaling features (fitted on NORMAL only)")
 print("=" * 55)
@@ -84,7 +65,7 @@ for i, feat in enumerate(FEATURES):
     print(f"    {feat:<25} mean={X_normal_scaled[:, i].mean():+.4f}  "
           f"std={X_normal_scaled[:, i].std():.4f}")
 
-# ── Step 3 — Train Isolation Forest ─────────────────────────────────────────
+
 print("\n" + "=" * 55)
 print("STEP 3 — Training Isolation Forest")
 print("=" * 55)
@@ -101,7 +82,7 @@ print(f"  ✅  n_estimators={model.n_estimators}  "
       f"contamination={model.contamination}  "
       f"n_features={model.n_features_in_}")
 
-# ── Step 4 — Evaluate ───────────────────────────────────────────────────────
+
 print("\n" + "=" * 55)
 print("STEP 4 — Evaluation")
 print("=" * 55)
@@ -136,7 +117,7 @@ print(f"\n  Score distribution:")
 print(f"    Normal  mean={normal_scores.mean():.4f}  max={normal_scores.max():.4f}")
 print(f"    Anomaly mean={anomaly_only.mean():.4f}  min={anomaly_only.min():.4f}")
 
-# ── Step 5 — Save artifacts ─────────────────────────────────────────────────
+
 print("\n" + "=" * 55)
 print("STEP 5 — Saving artifacts")
 print("=" * 55)

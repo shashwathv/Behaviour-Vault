@@ -1,29 +1,3 @@
-"""
-SCRIPT 1 — Generate Synthetic Behavioral Data  (REALISTIC v2)
-==============================================================
-BehaviorVault 2.0 | SuRaksha Cyber Hackathon 2.0
-
-PATHS:
-  Reads:  (nothing)
-  Writes: data/behavioral_data.csv
-          reports/data_summary.txt
-
-CHANGES FROM v1:
-  Normal distribution widened to match real mobile usage:
-    keystroke      : mean=600ms, std=200
-    touch_pressure : mean=0.50,  std=0.10
-    swipe_speed    : mean=450,   std=150
-    scroll_rhythm  : mean=179,   std=80
-    accel_variance : mean=0.05,  std=0.02
-
-  Anomaly sub-populations pushed clearly outside the new normal envelope
-  so the Isolation Forest still gets a clean separation signal.
-
-HOW TO RUN:
-  python pipeline/generate_data.py        # from project root
-  python generate_data.py                 # from inside pipeline/
-"""
-
 import os
 import numpy as np
 import pandas as pd
@@ -45,10 +19,6 @@ np.random.seed(SEED)
 N_NORMAL  = 1000
 N_ANOMALY = 200
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# NORMAL USER SESSIONS — realistic mobile behavior
-# ─────────────────────────────────────────────────────────────────────────────
 normal_sessions = pd.DataFrame({
     "keystroke_timing_ms": np.random.normal(600, 200, N_NORMAL).clip(200, 1100),
     "touch_pressure":      np.random.normal(0.50, 0.10, N_NORMAL).clip(0.2, 0.9),
@@ -59,9 +29,6 @@ normal_sessions = pd.DataFrame({
 })
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ANOMALY SUB-POPULATIONS
-# ─────────────────────────────────────────────────────────────────────────────
 n_attacker = int(N_ANOMALY * 0.4)   # 80
 n_duress   = int(N_ANOMALY * 0.4)   # 80
 n_bot      = N_ANOMALY - n_attacker - n_duress  # 40
@@ -97,9 +64,6 @@ bot = pd.DataFrame({
 })
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# COMBINE + SHUFFLE + ROUND + SAVE
-# ─────────────────────────────────────────────────────────────────────────────
 df = pd.concat([normal_sessions, attacker, duress, bot], ignore_index=True)
 df = df.sample(frac=1, random_state=SEED).reset_index(drop=True)
 
@@ -118,7 +82,6 @@ print(f"      ↳ Duress       : {n_duress}")
 print(f"      ↳ Bot          : {n_bot}")
 
 
-# ── Summary report ──────────────────────────────────────────────────────────
 features = ["keystroke_timing_ms", "touch_pressure", "swipe_speed_px_s",
             "scroll_rhythm_ms", "accel_variance"]
 

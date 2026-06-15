@@ -1,17 +1,3 @@
-"""
-SCRIPT 5 — Extract scaler MEAN / STD for the API
-=================================================
-BehaviorVault 2.0 | SuRaksha Cyber Hackathon 2.0
-
-PATHS:
-  Reads:  models/scaler.pkl
-
-Prints the exact MEAN and STD arrays the API needs. Copy these into
-api/app.py and replace the MEAN and STD constants there.
-
-HOW TO RUN:
-  python pipeline/get_scalar_value.py
-"""
 
 import os
 import pickle
