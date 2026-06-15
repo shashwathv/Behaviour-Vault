@@ -1,40 +1,3 @@
-"""
-BehaviorVault 2.0 — Inference API (v4 / FastAPI)
-================================================
-
-PATHS:
-  Reads:        models/behavior_model.tflite
-  Reads/writes: baselines/<user_id>.json
-
-WHAT'S NEW IN v4:
-  • Migrated Flask → FastAPI
-  • API key authentication via X-API-Key header
-  • Pydantic input validation with per-feature range bounds (rejects NaN,
-    out-of-range, missing fields automatically with helpful 422 responses)
-  • Auto-generated OpenAPI docs at /docs
-  • Unauthorized access attempts logged to dashboard
-  • All v3 dashboard logging + v3.5 confidence_pct + v3.6 lockout fix retained
-
-DEPLOY:
-  requirements.txt:
-    fastapi
-    uvicorn[standard]
-    tensorflow
-    numpy
-    rich>=13.0
-
-  Dockerfile CMD:
-    CMD ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "5000",
-         "--log-level", "warning"]
-
-  Coolify env vars:
-    BV_API_KEYS=<comma-separated keys>   # required for auth
-    PYTHONUNBUFFERED=1                   # so logs stream live
-
-  Generate a key:
-    python -c "import secrets; print(secrets.token_urlsafe(32))"
-"""
-
 import os
 os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '3')
 
@@ -60,7 +23,6 @@ from rich.panel import Panel
 from rich.table import Table
 from rich import box
 
-# ── Console (force_terminal keeps ANSI flowing through docker logs) ────────
 console = Console(
     force_terminal=True,
     width=int(os.environ.get('CONSOLE_WIDTH', '100')),
@@ -69,25 +31,25 @@ console = Console(
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# ── Model ──────────────────────────────────────────────────────────────────
+
 MODEL_PATH = os.path.join(BASE_DIR, "models", "behavior_model.tflite")
 interpreter = tf.lite.Interpreter(model_path=MODEL_PATH)
 interpreter.allocate_tensors()
 INPUT_DETAILS  = interpreter.get_input_details()
 OUTPUT_DETAILS = interpreter.get_output_details()
 
-# ── Scaler values (from pipeline/get_scalar_value.py) ──────────────────────
+
 MEAN = [604.4399, 0.5071, 451.8634, 179.5553, 0.0493]
 STD  = [191.6922, 0.0997, 144.1839,  78.1840, 0.0192]
 
-# ── Config ─────────────────────────────────────────────────────────────────
+
 EWMA_ALPHA               = 0.15
 WARMUP_SESSIONS          = 3
-ANOMALY_THRESHOLD        = 0.8    # is_anomaly returned to client
-SEVERE_ANOMALY_THRESHOLD = 0.95   # baseline frozen only above this
+ANOMALY_THRESHOLD        = 0.8    
+SEVERE_ANOMALY_THRESHOLD = 0.95  
 ELEVATED_THRESHOLD       = 0.5
-GLOBAL_WEIGHT            = 0.3    # was 0.6 — global model is for cold-start
-BASELINE_WEIGHT          = 0.7    # was 0.4 — personal baseline knows the user
+GLOBAL_WEIGHT            = 0.3   
+BASELINE_WEIGHT          = 0.7  
 BASELINE_NORMALIZER      = 3.0
 SUMMARY_EVERY            = 25
 
@@ -108,18 +70,12 @@ LEVEL_STYLE = {
     "ANOMALY":  ("red",    "✗"),
 }
 
-# ── API key authentication ─────────────────────────────────────────────────
-# Set BV_API_KEYS env var (comma-separated). If empty, auth is DISABLED with
-# a loud warning (dev convenience). In production, set it.
 API_KEYS = {
     k.strip() for k in os.environ.get('BV_API_KEYS', '').split(',') if k.strip()
 }
 
 
-# ── Pydantic input schema ──────────────────────────────────────────────────
-# Range bounds reject silly inputs (NaN, negative, absurdly large) before
-# they ever reach the model. Feature ranges chosen to cover realistic mobile
-# values with comfortable headroom.
+
 class PredictInput(BaseModel):
     userId:  Optional[str] = None
     user_id: Optional[str] = None
@@ -142,7 +98,7 @@ class PredictInput(BaseModel):
         ]
 
 
-# ── Live stats ─────────────────────────────────────────────────────────────
+
 STATS_LOCK = threading.Lock()
 STATS = {
     'started_at':   time.time(),
@@ -159,9 +115,7 @@ STATS = {
 RECENT = deque(maxlen=50)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  BASELINE PERSISTENCE
-# ─────────────────────────────────────────────────────────────────────────────
+
 _USER_ID_RE = re.compile(r'[^A-Za-z0-9_\-]')
 
 def safe_user_id(user_id: str) -> str:
@@ -205,14 +159,6 @@ def score_against_baseline(raw, baseline_values):
     return float(np.mean(deviations))
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  MODEL INFERENCE
-# ─────────────────────────────────────────────────────────────────────────────
-# Zero values mean "no activity for this gesture this session" — not anomalous,
-# just absent. Training data never contained zeros (swipes clipped to 150+, etc),
-# so raw 0 saturates the model. Replacing 0s with training means before global
-# inference makes missing features contribute z=0 (neutral signal). The personal
-# baseline still tracks raw values so user-specific patterns learn correctly.
 def impute_for_global_model(raw):
     imputed_features = []
     new_raw = list(raw)
@@ -235,9 +181,6 @@ def classify_level(score):
     return 'NORMAL'
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  DASHBOARD LOGGING
-# ─────────────────────────────────────────────────────────────────────────────
 def get_client_ip(request: Request) -> str:
     return (request.headers.get('CF-Connecting-IP')
             or request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
@@ -356,9 +299,7 @@ def print_error(ip, status_code, msg):
     )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  AUTH DEPENDENCY
-# ─────────────────────────────────────────────────────────────────────────────
+
 def require_api_key(
     request: Request,
     x_api_key: Optional[str] = Header(None, alias='X-API-Key'),
@@ -366,7 +307,7 @@ def require_api_key(
     """Reject if no key configured-globally → dev mode (allowed).
     Reject 401 if API_KEYS set but key missing/invalid."""
     if not API_KEYS:
-        return  # No keys configured → dev mode, allow all
+        return  
     if not x_api_key or x_api_key not in API_KEYS:
         ip = get_client_ip(request)
         print_error(ip, 401, f"unauthorized attempt at {request.url.path}")
@@ -379,9 +320,6 @@ def require_api_key(
         )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  APP LIFESPAN
-# ─────────────────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print_banner()
@@ -400,15 +338,13 @@ app = FastAPI(
         "Mobile behavioral anomaly detection. "
         "All endpoints except /health require X-API-Key header."
     ),
-    docs_url="/docs",     # set to None to hide
+    docs_url="/docs",   
     redoc_url=None,
     lifespan=lifespan,
 )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  EXCEPTION HANDLERS — log validation/error responses to the dashboard
-# ─────────────────────────────────────────────────────────────────────────────
+
 @app.exception_handler(RequestValidationError)
 def on_validation_error(request: Request, exc: RequestValidationError):
     ip = get_client_ip(request)
@@ -422,12 +358,9 @@ def on_validation_error(request: Request, exc: RequestValidationError):
     )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  ROUTES
-# ─────────────────────────────────────────────────────────────────────────────
+
 @app.get('/health')
 def health():
-    # Silent on dashboard — Cloudflare tunnel + uptime monitors hit this often.
     return {
         'status':          'ok',
         'model_loaded':    True,
@@ -449,11 +382,11 @@ def predict(payload: PredictInput, request: Request):
     user_id = payload.user()
     raw = payload.features()
 
-    # ── Global model (with zero-imputation) ───────────────────────────────
+    #Global model (with zero-imputation)
     raw_for_model, imputed_features = impute_for_global_model(raw)
     global_score = run_tflite(raw_for_model)
 
-    # ── Personal baseline ─────────────────────────────────────────────────
+    #Personal baseline 
     baseline = load_baseline(user_id)
     prior_session_count = baseline['session_count'] if baseline else 0
     baseline_score = (
@@ -495,7 +428,7 @@ def predict(payload: PredictInput, request: Request):
         'is_anomaly':        is_anomaly,
         'level':             level,
         'baseline_updated':  not freeze_baseline,
-        'imputed_features':  imputed_features,    # features that were 0 (missing)
+        'imputed_features':  imputed_features,   
     }
 
     with STATS_LOCK:
